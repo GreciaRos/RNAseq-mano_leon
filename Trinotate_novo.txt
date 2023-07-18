@@ -1,0 +1,92 @@
+#!/bin/bash
+### Directivas
+#SBATCH -p cicese
+#SBATCH --job-name=Anotacion
+#SBATCH --ntasks-per-node=8
+#SBATCH -N 1
+#SBATCH --mem=20GB
+#SBATCH --output=anotacion-%j.log
+#SBATCH --error=anotacion-%j.err
+#SBATCH -t 06-00:00:00
+
+BLAST=/LUSTRE/apps/bioinformatica/ncbi-blast-2.13.0+/bin 
+DATABASES=/LUSTRE/bioinformatica_data/genomica_funcional/tripp/DATABASES
+
+#paqueterias
+PATH=$PATH://LUSTRE/apps/bioinformatica/Trinotate/PerlLib
+PATH=$PATH:/LUSTRE/bioinformatica_data/genomica_funcional/apps/Trinotate-Trinotate-v4.0.1
+PATH=$PATH://LUSTRE/apps/bioinformatica/Trinotate/util/admin
+UTILS=/LUSTRE/apps/bioinformatica/trinityrnaseq-v2.15.1/util/support_scripts
+
+#programas 
+export PATH=$PATH:/LUSTRE/apps/bioinformatica/ncbi-blast-2.13.0+/bin
+export PATH=$PATH:/LUSTRE/bioinformatica_data/genomica_funcional/apps/infernal-1.1.4/src
+export PATH=$PATH:/LUSTRE/bioinformatica_data/genomica_funcional/apps/infernal-1.1.4
+export PATH=$PATH:/LUSTRE/apps/bioinformatica/RSEM/bin/samtools-1.3/
+export PATH=$PATH:/LUSTRE/bioinformatica_data/genomica_funcional/apps/hmmer-3.3.2/src
+export PATH=$PATH:/LUSTRE/bioinformatica_data/genomica_funcional/tripp/apps/tmhmm-2.0c/bin
+export PATH=$PATH:/LUSTRE/apps/bioinformatica/Trinotate
+export PATH=$PATH:/LUSTRE/apps/bioinformatica/TransDecoder-v5.7.0
+
+echo "Ejecuntandose la anotacion funcional"
+echo "Fecha de inicio: `date`"
+v1=`date`
+
+cd ${SLURM_SUBMIT_DIR}
+
+echo "Blastx"
+echo "inicio BlastX: `date`"
+
+#Cambiar de nombre el ensamble para evitar nombres de archivos muy largos
+
+mv good.Trinity.fasta Trinity.fasta
+
+
+$BLAST/blastx -query Trinity.fasta -db $DBS/uniprot_sprot.pep -num_threads 8 -max_target_seqs 1 -evalue 1E-05 -outfmt 6 > Blastx_swissprot.outfmt6
+
+echo "Resultados de Blastx se guardaron como BlastX_swissprot.outfmt6"
+
+#relacion de isoformas y genes
+
+echo "generacion de gene_trans_map"
+
+$UTILS/get_Trinity_gene_to_trans_map.pl Trinity.fasta > Trinity.gene_trans_map
+
+#identificacion de regiones codificantes
+
+echo "Identificacion de regiones codificantes con transdecoder"
+echo "inicio Transdecoder: `date`"
+
+TransDecoder.LongOrfs -t Trinity.fasta --gene_trans_map Trinity.gene_trans_map > transdecoder.log 
+
+#Predecir probables ORF codificantes
+echo "Predecir probables ORF codificantes: `date`"
+
+TransDecoder.Predict -t Trinity.fasta --cpu 8 >> transdecoder.log 
+
+#BlastP
+
+echo "Inicio de BlastP: `date`"
+
+$BLAST/blastp -query Trinity.fasta.transdecoder.pep -db $DBS/uniprot_sprot.pep -num_threads 8 -max_target_seqs 1 -outfmt 6 -evalue 1e-5 > Blastp_swissprot.outfmt6
+
+echo "se genero el archivo BlastP_swissprot.outfmt6 `date`"          
+#Identificacion de dominios proteicos con HMMSCAN                    
+hmmscan --cpu 8 --domtblout TrinotatePFAM.out $DBS/Pfam-A.hmm Trinity.fasta.transdecoder.pep
+
+echo "hmmscan `date`"
+
+#Prediccion de senhales peptidicas
+signalp -f short -n signalp.out Trinity.fasta.transdecoder.pep
+
+#Prediccion de dominios transmembranales
+tmhmm --short < Trinity.fasta.transdecoder.pep > tmhmm.out 
+
+echo "tmhmm.out: `date`"
+
+
+###final e imprimir fecha###
+echo "Tiempo de inicio: $v1 "
+echo "Tiempo final: `date`"
+
+exit 0
